@@ -88,7 +88,6 @@
 
   textarea {
     width: 100%;
-    height: 240px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -101,8 +100,31 @@
     outline: none;
     transition: border-color 0.2s;
   }
+  #json-input { height: 200px; }
   textarea:focus { border-color: var(--accent); }
   textarea::placeholder { color: var(--muted); }
+
+  /* Hidden Details for Transcription */
+  details.transcription-toggle {
+    margin-top: -0.5rem;
+  }
+  details.transcription-toggle summary {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0.5rem 0;
+    transition: color 0.2s;
+    letter-spacing: 0.05em;
+  }
+  details.transcription-toggle summary:hover {
+    color: var(--accent);
+  }
+  #transcription-input {
+    margin-top: 0.5rem;
+    height: 120px;
+    border-color: #333;
+  }
 
   .btn-primary {
     background: var(--accent);
@@ -183,6 +205,50 @@
     text-transform: uppercase;
   }
 
+  .card-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .label-mini {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .value-text {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: #ddd;
+  }
+
+  /* Text & Visual specific styles */
+  .video-text {
+    font-family: var(--display);
+    font-style: italic;
+    color: var(--text);
+    border-left: 2px solid var(--border);
+    padding-left: 0.8rem;
+    margin-left: 2px;
+  }
+  .visual-text {
+    color: var(--accent-dim);
+    font-weight: 700;
+  }
+  .muted-empty {
+    color: #555;
+    font-style: italic;
+    font-size: 0.8rem;
+  }
+
+  .search-query-text {
+    font-size: 0.88rem;
+    color: #aaa;
+  }
+
   .filename {
     font-family: var(--mono);
     font-size: 1.05rem;
@@ -194,21 +260,6 @@
     border: 1px solid rgba(232,255,71,0.15);
     border-radius: 4px;
     padding: 0.75rem 1rem;
-  }
-
-  .search-query-label {
-    font-family: var(--mono);
-    font-size: 0.62rem;
-    color: var(--muted);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    margin-bottom: 0.3rem;
-  }
-  .search-query-text {
-    font-size: 0.88rem;
-    color: #aaa;
-    font-style: italic;
-    line-height: 1.5;
   }
 
   /* the main action link */
@@ -343,9 +394,18 @@
 
   <!-- PASTE SCREEN -->
   <div id="paste-screen">
-    <label for="json-input">Cole o JSON aqui</label>
-    <textarea id="json-input" placeholder='[{"search_query": "...", "file_name": "...", ...}]' spellcheck="false"></textarea>
-    <span class="error-msg" id="error-msg">JSON inválido. Verifique o formato e tente novamente.</span>
+    <div>
+      <label for="json-input">Cole o JSON de B-rolls aqui</label>
+      <textarea id="json-input" placeholder='[{"search_query": "...", "file_name": "...", "segment_start": 1, "segment_end": 2}]' spellcheck="false"></textarea>
+    </div>
+
+    <!-- Hidden Transcription Field -->
+    <details class="transcription-toggle">
+      <summary>► Adicionar JSON de Transcrição (Opcional)</summary>
+      <textarea id="transcription-input" placeholder='{&#10;  "segments": [&#10;    { "segment": "1", "text": "Texto do vídeo..." }&#10;  ]&#10;}' spellcheck="false"></textarea>
+    </details>
+
+    <span class="error-msg" id="error-msg"></span>
     <button class="btn-primary" onclick="loadJSON()">Começar →</button>
   </div>
 
@@ -370,24 +430,63 @@
 
 <script>
   let items = [];
+  let transcriptionSegments = [];
   let current = 0;
 
   function loadJSON() {
-    const raw = document.getElementById('json-input').value.trim();
+    const rawBroll = document.getElementById('json-input').value.trim();
+    const rawTrans = document.getElementById('transcription-input').value.trim();
     const err = document.getElementById('error-msg');
+    
     try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error();
-      items = parsed;
+      // 1. Parse B-rolls
+      const parsedBroll = JSON.parse(rawBroll);
+      if (!Array.isArray(parsedBroll) || parsedBroll.length === 0) {
+        throw new Error("O JSON de B-rolls está vazio ou não é uma lista (Array).");
+      }
+      items = parsedBroll;
+
+      // 2. Parse Transcription (Optional)
+      if (rawTrans) {
+        const parsedTrans = JSON.parse(rawTrans);
+        if (parsedTrans.segments && Array.isArray(parsedTrans.segments)) {
+          transcriptionSegments = parsedTrans.segments;
+        } else {
+          throw new Error("JSON de Transcrição inválido. Faltando a chave 'segments'.");
+        }
+      } else {
+        transcriptionSegments = [];
+      }
+
       current = 0;
       err.classList.remove('show');
       document.getElementById('paste-screen').style.display = 'none';
       const ps = document.getElementById('picker-screen');
       ps.style.display = 'flex';
       renderCard();
-    } catch {
+    } catch (e) {
+      err.textContent = e.message || "JSON inválido. Verifique o formato e tente novamente.";
       err.classList.add('show');
     }
+  }
+
+  function getTranscriptionText(startId, endId) {
+    if (!transcriptionSegments || transcriptionSegments.length === 0) return "";
+    
+    const s = parseInt(startId, 10);
+    const e = parseInt(endId, 10);
+    
+    // Filtra todos os segmentos que estão dentro do range (inclusivo)
+    const segmentsInRange = transcriptionSegments.filter(seg => {
+      const id = parseInt(seg.segment, 10);
+      return id >= s && id <= e;
+    });
+
+    // Ordena para garantir a ordem cronológica
+    segmentsInRange.sort((a, b) => parseInt(a.segment, 10) - parseInt(b.segment, 10));
+
+    // Junta os textos
+    return segmentsInRange.map(seg => seg.text).join(" ");
   }
 
   function renderCard() {
@@ -414,35 +513,55 @@
       return;
     }
 
-    const query = encodeURIComponent(item.search_query);
+    // Lógica para obter o texto
+    let textToShow = item.text || ""; // Se o JSON de broll já tiver 'text', usa ele
+    if (!textToShow && item.segment_start !== undefined && item.segment_end !== undefined) {
+      textToShow = getTranscriptionText(item.segment_start, item.segment_end);
+    }
+    
+    const visualText = item.visual || "Não especificado";
+    const query = encodeURIComponent(item.search_query || "");
     const url = 'https://www.storyblocks.com/all-video/search/' + query + '?search-origin=search_bar';
 
     area.innerHTML = `
       <div class="card">
         <div class="card-index">Item ${current + 1} de ${total}</div>
 
-        <div>
-          <div class="search-query-label">Busca</div>
-          <div class="search-query-text">${escHtml(item.search_query)}</div>
+        <div class="card-section">
+          <div class="label-mini">Texto do Vídeo (Fala)</div>
+          <div class="value-text video-text">
+            ${textToShow ? escHtml(textToShow) : '<span class="muted-empty">Sem texto associado</span>'}
+          </div>
         </div>
 
-        <div>
-          <div class="search-query-label">Nome do arquivo</div>
-          <div class="filename">${escHtml(item.file_name)}</div>
+        <div class="card-section">
+          <div class="label-mini">Direção Visual</div>
+          <div class="value-text visual-text">${escHtml(visualText)}</div>
+        </div>
+
+        <div class="card-section">
+          <div class="label-mini">Termo de Busca (Storyblocks)</div>
+          <div class="search-query-text">${escHtml(item.search_query || "")}</div>
+        </div>
+
+        <div class="card-section">
+          <div class="label-mini">Nome final do arquivo</div>
+          <div class="filename">${escHtml(item.file_name || "")}</div>
         </div>
 
         <a class="storyblocks-link"
            href="${url}"
            target="_blank"
            rel="noopener"
-           onclick="copyToClipboard('${escAttr(item.file_name)}')">
-          <span>Abrir no Storyblocks &amp; copiar nome</span>
+           onclick="copyToClipboard('${escAttr(item.file_name || "")}')">
+          <span>Abrir Storyblocks &amp; Copiar Nome</span>
           <span class="link-icon">↗</span>
         </a>
       </div>`;
   }
 
   function copyToClipboard(text) {
+    if (!text) return;
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text).then(() => showToast(text));
     } else {
@@ -474,11 +593,16 @@
   }
 
   function reset() {
-    items = []; current = 0;
+    items = []; 
+    transcriptionSegments = [];
+    current = 0;
     document.getElementById('picker-screen').style.display = 'none';
     const ps = document.getElementById('paste-screen');
     ps.style.display = 'flex';
     document.getElementById('json-input').value = '';
+    document.getElementById('transcription-input').value = '';
+    // fecha o details por padrão no reset
+    document.querySelector('.transcription-toggle').removeAttribute('open');
   }
 
   function escHtml(s) {
@@ -488,9 +612,14 @@
     return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;');
   }
 
-  // allow Enter key on textarea + Ctrl+Enter to submit
-  document.getElementById('json-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.ctrlKey) loadJSON();
+  // allow Ctrl+Enter on either textarea to submit
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      const active = document.activeElement;
+      if (active.id === 'json-input' || active.id === 'transcription-input') {
+        loadJSON();
+      }
+    }
   });
 </script>
 </body>

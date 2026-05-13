@@ -402,7 +402,7 @@
     <!-- Hidden Transcription Field -->
     <details class="transcription-toggle">
       <summary>► Adicionar JSON de Transcrição (Opcional)</summary>
-      <textarea id="transcription-input" placeholder='{&#10;  "segments": [&#10;    { "segment": "1", "text": "Texto do vídeo..." }&#10;  ]&#10;}' spellcheck="false"></textarea>
+      <textarea id="transcription-input" placeholder='Aceita 2 formatos:&#10;1) { "segments": [ { "segment": "1", "text": "..." } ] }&#10;2) [ { "segment": "1", "text": "..." } ]' spellcheck="false"></textarea>
     </details>
 
     <span class="error-msg" id="error-msg"></span>
@@ -449,10 +449,16 @@
       // 2. Parse Transcription (Optional)
       if (rawTrans) {
         const parsedTrans = JSON.parse(rawTrans);
-        if (parsedTrans.segments && Array.isArray(parsedTrans.segments)) {
+        
+        // Verifica qual dos dois formatos de transcrição foi colado
+        if (Array.isArray(parsedTrans)) {
+          // Formato novo: array direto [ { "segment": "1", ... } ]
+          transcriptionSegments = parsedTrans;
+        } else if (parsedTrans && parsedTrans.segments && Array.isArray(parsedTrans.segments)) {
+          // Formato antigo: objeto com chave segments { "segments": [ ... ] }
           transcriptionSegments = parsedTrans.segments;
         } else {
-          throw new Error("JSON de Transcrição inválido. Faltando a chave 'segments'.");
+          throw new Error("JSON de Transcrição inválido. Use um Array ou um objeto com a chave 'segments'.");
         }
       } else {
         transcriptionSegments = [];
@@ -474,19 +480,31 @@
     if (!transcriptionSegments || transcriptionSegments.length === 0) return "";
     
     const s = parseInt(startId, 10);
-    const e = parseInt(endId, 10);
+    let e = parseInt(endId, 10);
+    
+    // Se o segment_end for null, undefined ou não for um número, 
+    // assumimos que queremos pegar apenas 1 segmento (o start).
+    if (isNaN(e)) {
+      e = s;
+    }
     
     // Filtra todos os segmentos que estão dentro do range (inclusivo)
     const segmentsInRange = transcriptionSegments.filter(seg => {
-      const id = parseInt(seg.segment, 10);
-      return id >= s && id <= e;
+      // Pega o ID de 'segment' (ou fallback para 'id')
+      const rawId = seg.segment !== undefined ? seg.segment : seg.id;
+      const id = parseInt(rawId, 10);
+      return !isNaN(id) && id >= s && id <= e;
     });
 
     // Ordena para garantir a ordem cronológica
-    segmentsInRange.sort((a, b) => parseInt(a.segment, 10) - parseInt(b.segment, 10));
+    segmentsInRange.sort((a, b) => {
+      const idA = parseInt(a.segment !== undefined ? a.segment : a.id, 10);
+      const idB = parseInt(b.segment !== undefined ? b.segment : b.id, 10);
+      return idA - idB;
+    });
 
     // Junta os textos
-    return segmentsInRange.map(seg => seg.text).join(" ");
+    return segmentsInRange.map(seg => seg.text).join(" ").trim();
   }
 
   function renderCard() {
@@ -515,7 +533,9 @@
 
     // Lógica para obter o texto
     let textToShow = item.text || ""; // Se o JSON de broll já tiver 'text', usa ele
-    if (!textToShow && item.segment_start !== undefined && item.segment_end !== undefined) {
+    
+    // Se não tem texto direto, mas tem um "segment_start" válido, busca na transcrição
+    if (!textToShow && item.segment_start !== undefined && item.segment_start !== null) {
       textToShow = getTranscriptionText(item.segment_start, item.segment_end);
     }
     
